@@ -1,0 +1,10 @@
+streamlit
+requests
+bs4
+pandas
+numpy
+sklearn
+collections
+network
+matplotlib.pyplot
+urllib.parse
