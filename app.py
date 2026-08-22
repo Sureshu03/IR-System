@@ -57,7 +57,7 @@ def pagerank_graph(docs, X, top_k =10, threshold=0.2):
     return nx.pagerank(G, weight="weight")
 
 #Function to search the document
-def search(query, tf_idf, X, docs, pagerank_scores, top_k=5):
+def search(query, tf_idf, X, docs, pagerank_scores, top_k=2):
     q_vec = tf_idf.transform([query])
     scores = cosine_similarity(q_vec, X).flatten()
 
@@ -81,7 +81,7 @@ def search(query, tf_idf, X, docs, pagerank_scores, top_k=5):
                     "final_score": (0.7 * keyword_score) + (0.3 * pagerank_scores.get(doc["id"], 0)),
                     "metadata": doc.get("metadata", {})
                 })
-        return sorted(results, key=lambda r: r["cosine_score"], reverse=True)[:top_k], y_scores
+        return sorted(results, key=lambda r: r["final_score"], reverse=True)[:top_k], y_scores
 
     # Normal TF‑IDF ranking
     ranked = sorted(list(enumerate(scores)), key=lambda x: x[1], reverse=True)
@@ -305,10 +305,10 @@ def ndcg(y_true, y_scores, k):
     return dcg / idcg if idcg > 0 else 0
 
 #Function for Evaluation Metrics
-def eval_ir(y_true, y_scores,  k= 2):
+def eval_ir(y_true, y_scores,  k=5):
     metrics = {
-        "Precision": np.mean(y_true[y_scores > 0.5]) if np.sum(y_scores > 0.5) > 0 else 0,
-        "Recall": np.sum(y_true[y_scores > 0.5]) / np.sum(y_true) if np.sum(y_true) > 0 else 0,
+        "Precision": np.mean(y_true[y_scores > 0.2]) if np.sum(y_scores > 0.2) > 0 else 0,
+        "Recall": np.sum(y_true[y_scores > 0.2]) / np.sum(y_true) if np.sum(y_true) > 0 else 0,
         "Precision@K": precision_at_k(y_true, y_scores, k),
         "Recall@K": recall_at_k(y_true, y_scores, k),
         "MAP": mean_average_precision(y_true, y_scores),
@@ -372,6 +372,46 @@ def get_y_true(docs, query):
         y_true.append(1 if relevant else 0)
 
     return np.array(y_true)
+
+def display_results(results, docs, pagerank_scores, score_label="Score"):
+    labels, cosine_scores, pagerank_scores_list = [], [], []
+
+    for r in results:
+        # Case 1: tuple (id, snippet, score)
+        if isinstance(r, tuple):
+            doc_id, snippet, score = r
+            doc = next(d for d in docs if d["id"] == doc_id)
+        # Case 2: dict (from search)
+        else:
+            doc_id = r["id"]
+            snippet = r["snippet"]
+            score = r.get("cosine_score", r.get("final_score", 0))
+            doc = next(d for d in docs if d["id"] == doc_id)
+
+        st.write(f"ID: {doc_id}")
+        st.write(f"Snippet: {snippet}")
+        st.write(f"{score_label}: {round(score,3)}, PageRank: {round(pagerank_scores.get(doc_id,0),3)}")
+        if doc["metadata"]:
+            st.write("Metadata:", doc["metadata"])
+        st.write("---")
+
+        # Collect for visualization
+        labels.append(doc_id)
+        cosine_scores.append(score)
+        pagerank_scores_list.append(pagerank_scores.get(doc_id, 0))
+
+    # Visualization of ranking
+    if labels:
+        st.write("Ranking Visualization:")
+        fig, ax = plt.subplots()
+        x = range(len(labels))
+        ax.bar(x, cosine_scores, width=0.4, label=score_label, align="center")
+        ax.bar([i+0.4 for i in x], pagerank_scores_list, width=0.4, label="PageRank", align="center")
+        ax.set_xticks([i+0.2 for i in x])
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.set_ylabel("Score")
+        ax.legend()
+        st.pyplot(fig)
 
 
 
@@ -458,30 +498,8 @@ if st.button("Search") and st.session_state.docs:
     # Call evaluation function
     metrics = eval_ir(y_true, y_scores, k=2)
 
-
     st.write("Top Search Results (Cosine vs PageRank):")
-    for r in results:
-      st.write(f"ID: {r['id']}")
-      st.write(f"Snippet: {r['snippet']}")
-      st.write(f"Cosine Similarity: {r['cosine_score']}, PageRank: {r['pagerank_score']}")
-      if r["metadata"]:
-        st.write("Metadata:", r["metadata"])
-      st.write("---")
-
-     # Visualization of ranking
-    st.write("Ranking Visualization:")
-    labels = [r["id"] for r in results]
-    cosine_scores = [r["cosine_score"] for r in results]
-    pagerank_scores_list = [r["pagerank_score"] for r in results]
-    fig, ax = plt.subplots()
-    x = range(len(labels))
-    ax.bar(x, cosine_scores, width=0.4, label="Cosine Similarity", align="center")
-    ax.bar([i+0.4 for i in x], pagerank_scores_list, width=0.4, label="PageRank", align="center")
-    ax.set_xticks([i+0.2 for i in x])
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_ylabel("Score")
-    ax.legend()
-    st.pyplot(fig)
+    display_results(results, st.session_state.docs, pagerank_scores, score_label="Cosine Similarity")
 
 # Recommendation Section
 rec_doc = st.text_area("Enter text for recommendation")
@@ -492,24 +510,18 @@ if st.button("Recommend") and st.session_state.docs:
     u_vec=tfidf.transform([rec_doc])
     y_scores = cosine_similarity(u_vec, st.session_state.X).flatten()
     if rec_type == "Content-Based":
-        recs = content_based_rec(rec_doc, st.session_state.tfidf, st.session_state.X, st.session_state.docs, top_k=2)
+        recs = content_based_rec(rec_doc, st.session_state.tfidf, st.session_state.X, st.session_state.docs, top_k=5)
         y_true = get_y_true(st.session_state.docs, rec_doc)
 
         pagerank_scores = pagerank_graph(st.session_state.docs, st.session_state.X)
         pagerank_scores = {k: v * len(st.session_state.docs) for k, v in pagerank_scores.items()}
+        
+        st.write(f"Top {rec_type} Recommendations (Cosine vs PageRank):")
+        display_results(recs, st.session_state.docs, pagerank_scores, score_label=rec_type+" Score")
 
-        st.write("Top Content-Based Recommendations:")
-        for doc_id, snippet, score in recs:
-            doc = next(d for d in st.session_state.docs if d["id"] == doc_id)
-            st.write(f"ID: {doc_id}")
-            st.write(f"Snippet: {snippet}")
-            st.write(f"Similarity Score: {score}")
-            st.write(f"Cosine Similarity: {score}, PageRank: {round(pagerank_scores.get(doc_id,0),3)}")
-            if doc["metadata"]:
-              st.write("Metadata:", doc["metadata"])
-        st.write("---")
 
     elif rec_type == "Collaborative":
+        recs = content_based_rec(rec_doc, st.session_state.tfidf, st.session_state.X, st.session_state.docs, top_k=5)
         ratings_matrix = np.random.randint(0, 6, size=(10, len(st.session_state.docs)))
         user_id = 0
         collab_recs = collaborative_rec(user_id, ratings_matrix, top_k=5)
@@ -517,17 +529,11 @@ if st.button("Recommend") and st.session_state.docs:
         pagerank_scores = pagerank_graph(st.session_state.docs, st.session_state.X)
         pagerank_scores = {k: v * len(st.session_state.docs) for k, v in pagerank_scores.items()}
 
-        st.write("Top Collaborative Recommendations:")
-        for item, score in collab_recs:
-          doc = st.session_state.docs[item]
-          st.write(f"ID: {doc['id']}")
-          st.write(f"Snippet: {doc['content'][:200]}")
-          st.write(f"Hybrid Score: {round(score,3)}, PageRank: {round(pagerank_scores.get(doc['id'],0),3)}")
-          if doc["metadata"]:
-              st.write("Metadata:", doc["metadata"])
-          st.write("---")
+        st.write(f"Top {rec_type} Recommendations (Cosine vs PageRank):")
+        display_results(recs, st.session_state.docs, pagerank_scores, score_label=rec_type+" Score")
 
     elif rec_type == "Hybrid":
+        recs = content_based_rec(rec_doc, st.session_state.tfidf, st.session_state.X, st.session_state.docs, top_k=5)
         u_vec = tfidf.transform([rec_doc])
         content_scores = cosine_similarity(u_vec, st.session_state.X).flatten()
         content_dict = {i: content_scores[i] for i in range(len(st.session_state.docs))}
@@ -542,21 +548,12 @@ if st.button("Recommend") and st.session_state.docs:
         pagerank_scores = pagerank_graph(st.session_state.docs, st.session_state.X)
         pagerank_scores = {k: v * len(st.session_state.docs) for k, v in pagerank_scores.items()}
 
-        st.write("Top Hybrid Recommendations:")
-        for item, score in hybrid_recs:
-          doc = st.session_state.docs[item]
-          st.write(f"ID: {doc['id']}")
-          st.write(f"Snippet: {doc['content'][:200]}")
-          st.write(f"Hybrid Score: {round(score,3)}, PageRank: {round(pagerank_scores.get(doc['id'],0),3)}")
-          if doc["metadata"]:
-              st.write("Metadata:", doc["metadata"])
-          st.write("---")
+        st.write(f"Top {rec_type} Recommendations (Cosine vs PageRank):")
+        display_results(recs, st.session_state.docs, pagerank_scores, score_label=rec_type+" Score")
     
     y_true = get_y_true(st.session_state.docs, rec_doc) 
     # Call evaluation function
     metrics = eval_ir(y_true, y_scores, k=5)
-    st.write(f"Evaluation Metrics ({rec_type} Recommendation):")
-    st.table(pd.DataFrame(metrics.items(), columns=["Metric", "Value"]))
 
 # Sidebar Dashboard
 st.sidebar.title("Dashboard")
