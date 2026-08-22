@@ -57,7 +57,7 @@ def pagerank_graph(docs, X, top_k =10, threshold=0.2):
     return nx.pagerank(G, weight="weight")
 
 #Function to search the document
-def search(query, tf_idf, X, docs, pagerank_scores, top_k=2):
+def search(query, tf_idf, X, docs, pagerank_scores, top_k=5):
     q_vec = tf_idf.transform([query])
     scores = cosine_similarity(q_vec, X).flatten()
 
